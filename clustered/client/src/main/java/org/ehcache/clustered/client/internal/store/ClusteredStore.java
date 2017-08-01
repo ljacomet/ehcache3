@@ -77,6 +77,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import static org.ehcache.core.exceptions.StorePassThroughException.handleRuntimeException;
@@ -167,7 +168,7 @@ public class ClusteredStore<K, V> implements AuthoritativeTier<K, V> {
   @Override
   public ValueHolder<V> get(final K key) throws StoreAccessException {
     getObserver.begin();
-    V value;
+    ValueHolder<V> value;
     try {
       value = getInternal(key);
     } catch (TimeoutException e) {
@@ -179,12 +180,12 @@ public class ClusteredStore<K, V> implements AuthoritativeTier<K, V> {
       return null;
     } else {
       getObserver.end(StoreOperationOutcomes.GetOutcome.HIT);
-      return new ClusteredValueHolder<V>(value);
+      return value;
     }
   }
 
-  private V getInternal(K key) throws StoreAccessException, TimeoutException {
-    V value = null;
+  private ValueHolder<V> getInternal(K key) throws StoreAccessException, TimeoutException {
+    ClusteredValueHolder<V> holder = null;
     try {
       Chain chain = storeProxy.get(key.hashCode());
       if(!chain.isEmpty()) {
@@ -197,13 +198,14 @@ public class ClusteredStore<K, V> implements AuthoritativeTier<K, V> {
 
         Result<V> resolvedResult = resolvedChain.getResolvedResult(key);
         if (resolvedResult != null) {
-          value = resolvedResult.getValue();
+          V value = resolvedResult.getValue();
+          holder = new ClusteredValueHolder<V>(value, resolvedChain.getExpirationTime());
         }
       }
     } catch (RuntimeException re) {
       handleRuntimeException(re);
     }
-    return value;
+    return holder;
   }
 
   @Override
@@ -482,17 +484,14 @@ public class ClusteredStore<K, V> implements AuthoritativeTier<K, V> {
     if(mappingFunction instanceof Ehcache.GetAllFunction) {
       Map<K, ValueHolder<V>> map  = new HashMap<K, ValueHolder<V>>();
       for (K key : keys) {
-        V value;
+        ValueHolder<V> value;
         try {
           value = getInternal(key);
         } catch (TimeoutException e) {
           // This timeout handling is safe **only** in the context of a get/read operation!
           value = null;
         }
-        ValueHolder<V> holder = null;
-        if(value != null) {
-          holder = new ClusteredValueHolder<V>(value);
-        }
+        ValueHolder<V> holder = (value != null) ? value : null;
         map.put(key, holder);
       }
       return map;
@@ -510,7 +509,7 @@ public class ClusteredStore<K, V> implements AuthoritativeTier<K, V> {
   @Override
   public ValueHolder<V> getAndFault(K key) throws StoreAccessException {
     getAndFaultObserver.begin();
-    V value;
+    ValueHolder<V> value;
     try {
       value = getInternal(key);
     } catch (TimeoutException e) {
@@ -522,7 +521,7 @@ public class ClusteredStore<K, V> implements AuthoritativeTier<K, V> {
       return null;
     } else {
       getAndFaultObserver.end(AuthoritativeTierOperationOutcomes.GetAndFaultOutcome.HIT);
-      return new ClusteredValueHolder<V>(value);
+      return value;
     }
   }
 

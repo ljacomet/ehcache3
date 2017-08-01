@@ -23,6 +23,7 @@ import org.ehcache.clustered.client.internal.EhcacheClientEntity;
 import org.ehcache.clustered.client.internal.EhcacheClientEntityFactory;
 import org.ehcache.clustered.client.internal.UnitTestConnectionService;
 import org.ehcache.clustered.client.internal.store.operations.ChainResolver;
+import org.ehcache.clustered.client.internal.store.operations.Result;
 import org.ehcache.clustered.client.internal.store.operations.codecs.OperationsCodec;
 import org.ehcache.clustered.common.ServerSideConfiguration;
 import org.ehcache.clustered.common.internal.ServerStoreConfiguration;
@@ -53,6 +54,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import static org.ehcache.clustered.util.StatisticsTestUtils.validateStat;
@@ -514,4 +516,34 @@ public class ClusteredStoreTest {
     store.bulkComputeIfAbsent(new HashSet<Long>(Arrays.asList(1L, 2L)), mappingFunction);
   }
 
+
+  @Test
+  public void testExpirationIsSentToHigherTiers() throws Exception {
+    @SuppressWarnings("unchecked")
+    Result<String> result = mock(Result.class);
+    when(result.getValue()).thenReturn("bar");
+
+    @SuppressWarnings("unchecked")
+    ResolvedChain<Long, String> resolvedChain = mock(ResolvedChain.class);
+    when(resolvedChain.getResolvedResult(anyLong())).thenReturn(result);
+    when(resolvedChain.getExpirationTime()).thenReturn(1000L);
+
+    @SuppressWarnings("unchecked")
+    ChainResolver<Long, String> resolver = mock(ChainResolver.class);
+    when(resolver.resolve(any(Chain.class), anyLong(), anyLong())).thenReturn(resolvedChain);
+
+    ServerStoreProxy proxy = mock(ServerStoreProxy.class);
+    when(proxy.get(anyLong())).thenReturn(mock(Chain.class));
+
+    @SuppressWarnings("unchecked")
+    OperationsCodec<Long, String> codec = mock(OperationsCodec.class);
+    TimeSource timeSource = mock(TimeSource.class);
+
+    ClusteredStore<Long, String> store = new ClusteredStore<Long, String>(codec, resolver, proxy, timeSource);
+
+    Store.ValueHolder<?> vh = store.get(1L);
+
+    long expirationTime = vh.expirationTime(TimeUnit.MILLISECONDS);
+    assertThat(expirationTime, is(1000L));
+  }
 }

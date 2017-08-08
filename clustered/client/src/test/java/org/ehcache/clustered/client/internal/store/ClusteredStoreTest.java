@@ -59,6 +59,7 @@ import java.util.concurrent.TimeoutException;
 
 import static org.ehcache.clustered.util.StatisticsTestUtils.validateStat;
 import static org.ehcache.clustered.util.StatisticsTestUtils.validateStats;
+import static org.ehcache.core.spi.store.Store.ValueHolder.NO_EXPIRE;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.junit.Assert.*;
@@ -545,5 +546,35 @@ public class ClusteredStoreTest {
 
     long expirationTime = vh.expirationTime(TimeUnit.MILLISECONDS);
     assertThat(expirationTime, is(1000L));
+  }
+
+  @Test
+  public void testNoExpireIsSentToHigherTiers() throws Exception {
+    @SuppressWarnings("unchecked")
+    Result<String> result = mock(Result.class);
+    when(result.getValue()).thenReturn("bar");
+
+    @SuppressWarnings("unchecked")
+    ResolvedChain<Long, String> resolvedChain = mock(ResolvedChain.class);
+    when(resolvedChain.getResolvedResult(anyLong())).thenReturn(result);
+    when(resolvedChain.getExpirationTime()).thenReturn(Long.MAX_VALUE); // no expire
+
+    @SuppressWarnings("unchecked")
+    ChainResolver<Long, String> resolver = mock(ChainResolver.class);
+    when(resolver.resolve(any(Chain.class), anyLong(), anyLong())).thenReturn(resolvedChain);
+
+    ServerStoreProxy proxy = mock(ServerStoreProxy.class);
+    when(proxy.get(anyLong())).thenReturn(mock(Chain.class));
+
+    @SuppressWarnings("unchecked")
+    OperationsCodec<Long, String> codec = mock(OperationsCodec.class);
+    TimeSource timeSource = mock(TimeSource.class);
+
+    ClusteredStore<Long, String> store = new ClusteredStore<Long, String>(codec, resolver, proxy, timeSource);
+
+    Store.ValueHolder<?> vh = store.get(1L);
+
+    long expirationTime = vh.expirationTime(TimeUnit.MILLISECONDS);
+    assertThat(expirationTime, is(NO_EXPIRE));
   }
 }

@@ -17,7 +17,6 @@
 package org.ehcache.clustered.client;
 
 import org.ehcache.Cache;
-import org.ehcache.CacheManager;
 import org.ehcache.CachePersistenceException;
 import org.ehcache.PersistentCacheManager;
 import org.ehcache.clustered.client.config.builders.ClusteredResourcePoolBuilder;
@@ -29,6 +28,7 @@ import org.ehcache.config.builders.ResourcePoolsBuilder;
 import org.ehcache.config.units.MemoryUnit;
 import org.ehcache.expiry.Duration;
 import org.ehcache.expiry.Expirations;
+import org.ehcache.expiry.Expiry;
 import org.ehcache.impl.internal.TimeSourceConfiguration;
 import org.junit.After;
 import org.junit.Before;
@@ -49,16 +49,22 @@ public class ClusteredCacheExpirationTest {
 
   private TestTimeSource timeSource = new TestTimeSource();
 
-  private CacheManagerBuilder<PersistentCacheManager> clusteredCacheManagerBuilder =
-      newCacheManagerBuilder()
-          .using(new TimeSourceConfiguration(timeSource))
-          .with(cluster(CLUSTER_URI).autoCreate())
-          .withCache(CLUSTERED_CACHE, newCacheConfigurationBuilder(Long.class, String.class,
-              ResourcePoolsBuilder.newResourcePoolsBuilder()
-                  .heap(10)
-                  .with(ClusteredResourcePoolBuilder.clusteredDedicated("primary-server-resource", 32, MemoryUnit.MB)))
-                .withExpiry(Expirations.timeToLiveExpiration(Duration.of(1, TimeUnit.SECONDS)))
-              .add(ClusteredStoreConfigurationBuilder.withConsistency(Consistency.STRONG)));
+  private CacheManagerBuilder<PersistentCacheManager> cacheManagerBuilder(Expiry<Object, Object> expiry) {
+    return newCacheManagerBuilder()
+        .using(new TimeSourceConfiguration(timeSource))
+        .with(cluster(CLUSTER_URI).autoCreate())
+        .withCache(CLUSTERED_CACHE, newCacheConfigurationBuilder(Long.class, String.class,
+            ResourcePoolsBuilder.newResourcePoolsBuilder()
+                .heap(10)
+                .offheap(10, MemoryUnit.MB)
+                .with(ClusteredResourcePoolBuilder.clusteredDedicated("primary-server-resource", 32, MemoryUnit.MB)))
+              .withExpiry(expiry)
+            .add(ClusteredStoreConfigurationBuilder.withConsistency(Consistency.STRONG)));
+  }
+
+  private Expiry<Object, Object> onSecondExpiration() {
+    return Expirations.timeToLiveExpiration(Duration.of(1, TimeUnit.SECONDS));
+  }
 
   @Before
   public void definePassthroughServer() throws Exception {
@@ -75,17 +81,26 @@ public class ClusteredCacheExpirationTest {
 
   @Test
   public void testGetExpirationPropagatedToHigherTiers() throws CachePersistenceException {
+    CacheManagerBuilder<PersistentCacheManager> clusteredCacheManagerBuilder = cacheManagerBuilder(onSecondExpiration());
     try(PersistentCacheManager cacheManager = clusteredCacheManagerBuilder.build(true)) {
       Cache<Long, String> cache = cacheManager.getCache(CLUSTERED_CACHE, Long.class, String.class);
-      cache.put(1L, "value"); // store on the cluster
-      cache.get(1L); // push it up on heap tier
+      for (long i = 0; i < 30; i++) {
+        cache.put(i, "value"); // store on the cluster
+        cache.get(i); // push it up on heap and offheap tier
+      }
+
       timeSource.advanceTime(1500); // go after expiration
-      assertThat(cache.get(1L)).isEqualTo(null); // the value should have expired
+
+      for (long i = 0; i < 30; i++) {
+        assertThat(cache.get(i)).isEqualTo(null); // the value should have expired
+      }
     }
   }
 
   @Test
   public void testPutIfAbsentExpirationPropagatedToHigherTiers() throws CachePersistenceException {
+    CacheManagerBuilder<PersistentCacheManager> clusteredCacheManagerBuilder = cacheManagerBuilder(onSecondExpiration());
+
     try(PersistentCacheManager cacheManager = clusteredCacheManagerBuilder.build(true)) {
       Cache<Long, String> cache = cacheManager.getCache(CLUSTERED_CACHE, Long.class, String.class);
       cache.put(1L, "value"); // store on the cluster

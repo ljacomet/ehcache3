@@ -75,6 +75,8 @@ if (hasProperty('testVM')) {
   println "Using Test JVM $testJava [Version: $testJava.javaVersion.majorVersion]"
 }
 
+defaultTasks 'assemble'
+
 subprojects {
   apply plugin: 'java'
   apply plugin: 'eclipse'
